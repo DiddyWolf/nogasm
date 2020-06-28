@@ -67,6 +67,9 @@ Encoder myEnc(3, 2); //Quadrature inputs
 #define ALGOSEL 7
 #define ALGOGND 8
 
+//Edge logging button
+#define EDGEBUTTON 11
+
 //Motor
 #define MOTPIN 9
 
@@ -180,6 +183,10 @@ void setup() {
   pinMode(ALGOGND,OUTPUT);
   digitalWrite(ALGOSEL,HIGH);
   digitalWrite(ALGOGND,LOW);
+
+  //Edge logging button
+  pinMode(EDGEBUTTON, INPUT);
+  digitalWrite(EDGEBUTTON,HIGH);
 
   pinMode(MOTPIN,OUTPUT); //Enable "analog" out (PWM)
   
@@ -642,6 +649,8 @@ void loop() {
     Serial.print(pressure); //(Original ADC value - 12 bits, 0-4095)
     Serial.print(",");
     Serial.print(avgPressure); //Running average of (default last 25 seconds) pressure
+    Serial.print(",");
+    Serial.print(digitalRead(EDGEBUTTON) * 1000);
     Serial.print(",");
     Serial.print(pLimit);
     Serial.print(",");
