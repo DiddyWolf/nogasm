@@ -650,7 +650,8 @@ void loop() {
     Serial.print(",");
     Serial.print(avgPressure); //Running average of (default last 25 seconds) pressure
     Serial.print(",");
-    Serial.print(digitalRead(EDGEBUTTON) * 1000);
+    //Edge button is active low
+    Serial.print(!digitalRead(EDGEBUTTON) * 1000);
     Serial.print(",");
     Serial.print(pLimit);
     Serial.print(",");
