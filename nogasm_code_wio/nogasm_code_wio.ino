@@ -1,40 +1,7 @@
-// Diddy's Protogasm Code, forked from Nogasm Code Rev. 3 PLUS Alusion algo
+// Nogasm for Wio Terminal
 /* Drives a vibrator and uses changes in pressure of an inflatable buttplug
  * to estimate a user's closeness to orgasm, and turn off the vibrator
  * before that point.
- * A state machine updating at 60Hz creates different modes and option menus
- * that can be identified by the color of the LEDs, especially the RGB LED
- * in the central button/encoder knob.
- * 
- * [Red]    Manual Vibrator Control
- * [Blue]   Automatic vibrator edging, knob adjusts orgasm detection sensitivity
- * [Green]  Setting menu for maximum vibrator speed in automatic mode
- * [White]  Debubbing menu to show data from the pressure sensor ADC
- * [Off]    While still plugged in, holding the button down for >3 seconds turns
- *          the whole device off, until the button is pressed again.
- * 
- * Settings like edging sensitivity, or maximum motor speed are stored in EEPROM,
- * so they are saved through power-cycling.
- * 
- * In the automatic edging mode, the vibrator speed will linearly ramp up to full
- * speed (set in the green menu) over 30 seconds. If a near-orgasm is detected,
- * the vibrator abruptly turns off for 15 seconds, then begins ramping up again.
- * 
- * The motor will beep during power on/off, and if the plug pressure rises above
- * the maximum the board can read - this condition could lead to a missed orgasm 
- * if unchecked. The analog gain for the sensor is adjustable via a trimpot to
- * accomidate different types of plugs that have higher/lower resting pressures.
- * 
- * Motor speed, current pressure, and average pressure are reported via USB serial
- * at 115200 baud. Timestamps can also be enabled, from the main loop.
- * 
- * There is some framework for more features like an adjustable "cool off" time 
- * other than the default 15 seconds, and options for LED brightness and enabling/
- * disabling beeps.
- * 
- * Note - Do not set all the LEDs to white at full brightness at once
- * (RGB 255,255,255) It may overheat the voltage regulator and cause the board 
- * to reset.
  */
 //=======Libraries===============================
 #include "RunningAverage.h"
