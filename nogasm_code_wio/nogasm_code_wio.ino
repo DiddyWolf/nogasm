@@ -59,6 +59,7 @@ ButtonStates buttonstate = NONE;
 
 //=======Globals====================================
 int pressure = 0;
+int motorspeed = 0;
 
 //=======Setup=======================================
 
@@ -138,7 +139,7 @@ void read_buttons(){
     }
 }
 
-void set_main_state(){
+void set_state(){
     switch(mainstate){
         case MANUAL:
             switch(buttonstate){
@@ -170,10 +171,61 @@ void set_main_state(){
     }
 }
 
+void run_state(){
+    switch(mainstate){
+        case MANUAL:
+            run_state_manual();
+            break;
+        case AUTO:
+            run_state_auto();
+            break;
+        case SETTINGS:
+            run_state_settings();
+            break;
+    }
+}
+
+// Set motor speed, then fix prescaler to remove motor whine.
+void set_motor_speed(int speed){
+    analogWrite(MOTPIN,speed);
+    // Disable TCx
+    TC0->COUNT8.CTRLA.bit.ENABLE = 0;
+    while (TC0->COUNT8.SYNCBUSY.bit.ENABLE);
+    // Set Timer counter Mode to 8 bits, normal PWM, prescaler 1/256
+    TC0->COUNT8.CTRLA.reg = TC_CTRLA_MODE_COUNT8 | TC_CTRLA_PRESCALER_DIV16;
+    // Enable TCx
+    TC0->COUNT8.CTRLA.bit.ENABLE = 1;
+    while (TC0->COUNT8.SYNCBUSY.bit.ENABLE);
+}
+
+void run_state_manual(){
+    switch(buttonstate){
+        case UP:
+            motorspeed += 10;
+            if (motorspeed > 250) motorspeed = 250;
+            break;
+        case DOWN:
+            motorspeed -= 10;
+            if (motorspeed < 0) motorspeed = 0;
+            break;
+    }
+    set_motor_speed(motorspeed);
+}
+
+void run_state_auto(){
+    
+}
+
+void run_state_settings(){
+
+}
+
 void run_logging(){
     SerialUSB.print(mainstate);
     SerialUSB.print(",");
     SerialUSB.print(buttonstate);
+    SerialUSB.print(",");
+    SerialUSB.print(motorspeed);
     SerialUSB.print(",");
     SerialUSB.println(pressure);
 }
@@ -183,9 +235,9 @@ void run_logging(){
 void mainloop() {
     read_pressure();
     read_buttons();
-    set_main_state();
-    //run_main_statemachine();
-    //run_display_statemachine();
+    set_state();
+    run_state();
+    //draw_display();
     run_logging(); 
 }
 
