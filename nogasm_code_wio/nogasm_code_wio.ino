@@ -21,12 +21,34 @@
 enum MainStates{MANUAL,AUTO,SETTINGS};
 MainStates mainstate = MANUAL;
 
-enum ButtonStates{A,B,C,UP,DOWN,LEFT,RIGHT,PRESS,NONE};
+enum ButtonStates{NONE,A,B,C,UP,DOWN,LEFT,RIGHT,PRESS};
 ButtonStates buttonstate = NONE;
+
+//=======Timing=====================================
+#define FREQUENCY 60 //Update frequency in Hz
+
+//Update/render period
+#define PERIOD (1000/FREQUENCY)
+
+//Running pressure average array length and update frequency
+#define RA_HIST_SECONDS 25
+#define RA_FREQUENCY 6
+#define RA_TICK_PERIOD (FREQUENCY / RA_FREQUENCY)
+RunningAverage raPressure(RA_FREQUENCY*RA_HIST_SECONDS);
+
+#define BUTTON_HOLD_TICKS 20
 
 //=======Globals====================================
 int pressure = 0;
-int motorspeed = 0;
+int avgPressure = 0; //Running 25 second average pressure
+float motorspeed = 0;
+int sensitivity = 0; //orgasm detection sensitivity, persists through different states
+int rampTimeS = 30; //Ramp-up time, in seconds
+#define MAX_PLIMIT 600
+int pLimit = MAX_PLIMIT; //Limit in change of pressure before the vibrator turns off
+int maxSpeed = 255; //maximum speed the motor will ramp up to in automatic mode
+#define MOT_MAX 255 // Motor PWM maximum
+#define MOT_MIN 20  // Motor PWM minimum.  It needs a little more than this to start.
 
 //=======Setup=======================================
 
@@ -54,6 +76,7 @@ void setup() {
 //=======Functions====================================
 
 void read_pressure() {
+    static uint8_t sampleTick = 0;
     pressure = analogRead(BUTTPIN);
     //Alarm if over max pressure
     if (pressure > MAXPRES) {
@@ -62,46 +85,44 @@ void read_pressure() {
       analogWrite(WIO_BUZZER, 0);
     }
 
+    sampleTick++;
+    if (sampleTick % RA_TICK_PERIOD == 0){
+        raPressure.addValue(pressure);
+        avgPressure = raPressure.getAverage();
+    }
+
 }
 
 void read_buttons(){
-    static int laststate[8];
-    static int currstate[8];
-    static int buttons[] = {WIO_KEY_A,WIO_KEY_B,WIO_KEY_C,WIO_5S_UP,WIO_5S_DOWN,WIO_5S_LEFT,WIO_5S_RIGHT,WIO_5S_PRESS};
+    static int laststate[9] = {0,1}; // Set the A key last state to start at 1, to avoid undesired button press on startup.
+    static int currstate[9];
+    static int holdcount = 0;
+    static int buttons[] = {NONE,WIO_KEY_A,WIO_KEY_B,WIO_KEY_C,WIO_5S_UP,WIO_5S_DOWN,WIO_5S_LEFT,WIO_5S_RIGHT,WIO_5S_PRESS};
 
-    for (int i = 0; i<8; i++){
+    // Skipping 0 and padding the buttons array with NONE so that the 'resting' buttonstate is 0.
+    for (int i = 1; i<9; i++){
         currstate[i] = digitalRead(buttons[i]);
     }
 
-    if (laststate[A] == LOW and currstate[A] == HIGH) {
-        buttonstate = A;
-    }
-    else if (laststate[B] == LOW and currstate[B] == HIGH) {
-        buttonstate = B;
-    }
-    else if (laststate[C] == LOW and currstate[C] == HIGH) {
-        buttonstate = C;
-    }
-    else if (laststate[UP] == LOW and currstate[UP] == HIGH) {
-        buttonstate = UP;
-    }
-    else if (laststate[DOWN] == LOW and currstate[DOWN] == HIGH) {
-        buttonstate = DOWN;
-    }
-    else if (laststate[LEFT] == LOW and currstate[LEFT] == HIGH) {
-        buttonstate = LEFT;
-    }
-    else if (laststate[RIGHT] == LOW and currstate[RIGHT] == HIGH) {
-        buttonstate = RIGHT;
-    }
-    else if (laststate[PRESS] == LOW and currstate[PRESS] == HIGH) {
-        buttonstate = PRESS;
-    }
-    else {
-        buttonstate = NONE;
+    for (int i = 1; i<9; i++){
+        if (laststate[i] == LOW and currstate[i] == HIGH){
+            if (holdcount < BUTTON_HOLD_TICKS) buttonstate = (ButtonStates)i;
+            else buttonstate = NONE;
+            holdcount = 0;
+            break;
+        }
+        else if ((i == UP or i == DOWN or i == LEFT or i == RIGHT) and laststate[i] == LOW and currstate[i] == LOW){
+            holdcount++;
+            if (holdcount % BUTTON_HOLD_TICKS == 0) buttonstate = (ButtonStates)i;
+            else buttonstate = NONE;
+            break;
+        }
+        else {
+            buttonstate = NONE;
+        }
     }
 
-    for (int i = 0; i<8; i++){
+    for (int i = 1; i<9; i++){
         laststate[i] = currstate[i];
     }
 }
@@ -112,6 +133,7 @@ void set_state(){
             switch(buttonstate){
                 case A:
                     mainstate = AUTO;
+                    motorspeed = 0;
                     break;
                 case C:
                     mainstate = SETTINGS;
@@ -122,6 +144,7 @@ void set_state(){
             switch(buttonstate){
                 case A:
                     mainstate = MANUAL;
+                    motorspeed = 0;
                     break;
                 case C:
                     mainstate = SETTINGS;
@@ -132,6 +155,7 @@ void set_state(){
             switch(buttonstate){
                 case A:
                     mainstate = MANUAL;
+                    motorspeed = 0;
                     break;
             }
             break;
@@ -180,7 +204,37 @@ void run_state_manual(){
 }
 
 void run_state_auto(){
-    
+    static float motIncrement = 0.0;
+    motIncrement = ((float)maxSpeed / ((float)FREQUENCY * (float)rampTimeS));
+
+    switch(buttonstate){
+        case UP:
+            sensitivity += 10;
+            if (sensitivity > MAX_PLIMIT) sensitivity = MAX_PLIMIT;
+            break;
+        case DOWN:
+            sensitivity -= 10;
+            if (sensitivity < 0) sensitivity = 0;
+            break;
+    }
+
+    // Invert the sensitivity value to get the pressure limit.
+    // Higher sensitivity means a lower pressure delta to trigger an edge.
+    pLimit = map(sensitivity,0,MAX_PLIMIT,MAX_PLIMIT,0);
+
+    if (pressure - avgPressure > pLimit) {
+        motorspeed = -.5*(float)rampTimeS*((float)FREQUENCY*motIncrement);//Stay off for a while (half the ramp up time)
+    }
+    else if (motorspeed < (float)maxSpeed) {
+        motorspeed += motIncrement;
+    }
+
+    if (motorspeed > MOT_MIN) {
+        set_motor_speed((int)motorspeed);
+    } else {
+        set_motor_speed(0);
+    }
+
 }
 
 void run_state_settings(){
@@ -192,9 +246,16 @@ void run_logging(){
     SerialUSB.print(",");
     SerialUSB.print(buttonstate);
     SerialUSB.print(",");
-    SerialUSB.print(motorspeed);
+    SerialUSB.print(pressure);
     SerialUSB.print(",");
-    SerialUSB.println(pressure);
+    SerialUSB.print(avgPressure);
+    SerialUSB.print(",");
+    SerialUSB.print(sensitivity);
+    SerialUSB.print(",");
+    SerialUSB.print(pLimit);
+    SerialUSB.print(",");
+    SerialUSB.print(motorspeed);
+    SerialUSB.println("");
 }
 
 //=======Main Loop====================================
@@ -206,8 +267,9 @@ void mainloop() {
     run_state();
     //draw_display();
     run_logging(); 
+    delay(1); //Prevent repetitive runs if we finish faster than 1ms
 }
 
 void loop(){
-    if (millis() % 10 == 0) mainloop();
+    if (millis() % PERIOD == 0) mainloop();
 }
