@@ -7,7 +7,7 @@
 #include "RunningAverage.h"
 
 //=======Hardware Setup===============================
-//Motor
+//Motor PWM out
 #define MOTPIN D6
 
 //Pressure Sensor Analog In
@@ -16,18 +16,26 @@
 //Max pressure
 #define MAXPRES 4030
 
+//Motor min and max speeds
+#define MOT_MAX 255 // Motor PWM maximum
+#define MOT_MIN 20  // Motor PWM minimum.  It needs a little more than this to start.
+
 //=======States=====================================
 //Define all enums for state machines
-enum MainStates{MANUAL,AUTO,SETTINGS};
-MainStates mainstate = MANUAL;
+enum MainStates{STATE_MANUAL,STATE_AUTO,STATE_SETTINGS};
+MainStates mainstate = STATE_MANUAL;
 
-enum ButtonStates{NONE,A,B,C,UP,DOWN,LEFT,RIGHT,PRESS};
-ButtonStates buttonstate = NONE;
+enum ButtonStates{BUTTON_NONE,BUTTON_A,BUTTON_B,BUTTON_C,BUTTON_UP,BUTTON_DOWN,BUTTON_LEFT,BUTTON_RIGHT,BUTTON_PRESS};
+ButtonStates buttonstate = BUTTON_NONE;
+
+enum SettingsStates{SET_SPEED, SET_SENSITIVITY};
+SettingsStates settingsstate = SET_SPEED;
 
 //=======Timing=====================================
-#define FREQUENCY 60 //Update frequency in Hz
+//Main loop frequency
+#define FREQUENCY 60 //Hz
 
-//Update/render period
+//Period between main loop runs
 #define PERIOD (1000/FREQUENCY)
 
 //Running pressure average array length and update frequency
@@ -36,6 +44,7 @@ ButtonStates buttonstate = NONE;
 #define RA_TICK_PERIOD (FREQUENCY / RA_FREQUENCY)
 RunningAverage raPressure(RA_FREQUENCY*RA_HIST_SECONDS);
 
+// Number of ticks between repeat button presses.
 #define BUTTON_HOLD_TICKS 20
 
 //=======Globals====================================
@@ -47,8 +56,6 @@ int rampTimeS = 30; //Ramp-up time, in seconds
 #define MAX_PLIMIT 600
 int pLimit = MAX_PLIMIT; //Limit in change of pressure before the vibrator turns off
 int maxSpeed = 255; //maximum speed the motor will ramp up to in automatic mode
-#define MOT_MAX 255 // Motor PWM maximum
-#define MOT_MIN 20  // Motor PWM minimum.  It needs a little more than this to start.
 
 //=======Setup=======================================
 
@@ -68,16 +75,20 @@ void setup() {
     pinMode(WIO_5S_RIGHT, INPUT_PULLUP);
     pinMode(WIO_5S_PRESS, INPUT_PULLUP);
 
+    //Set analog resolution for 0-4094 range
     analogReadResolution(12);
-    //Average 32 samples
+    //Average 32 samples on each read
     ADC0->AVGCTRL.reg = ADC_AVGCTRL_SAMPLENUM_32 | ADC_AVGCTRL_ADJRES(4);
 }
 
 //=======Functions====================================
 
+// Read pressure and add it to the running average at a slower speed.
 void read_pressure() {
     static uint8_t sampleTick = 0;
+
     pressure = analogRead(BUTTPIN);
+
     //Alarm if over max pressure
     if (pressure > MAXPRES) {
       analogWrite(WIO_BUZZER, 200);
@@ -85,6 +96,7 @@ void read_pressure() {
       analogWrite(WIO_BUZZER, 0);
     }
 
+    // Once per RA_TICK_PERIOD, add pressure to running average.
     sampleTick++;
     if (sampleTick % RA_TICK_PERIOD == 0){
         raPressure.addValue(pressure);
@@ -93,68 +105,80 @@ void read_pressure() {
 
 }
 
+// Read all button presses. Handle repeat presses for direction keys.
 void read_buttons(){
     static int laststate[9] = {0,1}; // Set the A key last state to start at 1, to avoid undesired button press on startup.
     static int currstate[9];
     static int holdcount = 0;
     static int buttons[] = {NONE,WIO_KEY_A,WIO_KEY_B,WIO_KEY_C,WIO_5S_UP,WIO_5S_DOWN,WIO_5S_LEFT,WIO_5S_RIGHT,WIO_5S_PRESS};
 
-    // Skipping 0 and padding the buttons array with NONE so that the 'resting' buttonstate is 0.
+    // Skipping 0 and padding the buttons array with NONE so that the 'resting' buttonstate can be 0.
     for (int i = 1; i<9; i++){
         currstate[i] = digitalRead(buttons[i]);
     }
 
+    // In all cases below, 'i' is referring to the position in the ButtonStates enum.
     for (int i = 1; i<9; i++){
+        // Was pressed and now released.
         if (laststate[i] == LOW and currstate[i] == HIGH){
+            // Held less than BUTTON_HOLD_TICKS? Trigger button press. Prevents extra press when exiting held state.
             if (holdcount < BUTTON_HOLD_TICKS) buttonstate = (ButtonStates)i;
-            else buttonstate = NONE;
+            else buttonstate = BUTTON_NONE;
+            // Reset hold count on button release.
             holdcount = 0;
             break;
         }
+        // Direction buttons pressed and continue to be pressed.
         else if ((i == UP or i == DOWN or i == LEFT or i == RIGHT) and laststate[i] == LOW and currstate[i] == LOW){
+            // Increment hold count.
             holdcount++;
+            // Button held for BUTTON_HOLD_TICKS? Trigger button press.
             if (holdcount % BUTTON_HOLD_TICKS == 0) buttonstate = (ButtonStates)i;
-            else buttonstate = NONE;
+            else buttonstate = BUTTON_NONE;
             break;
         }
         else {
-            buttonstate = NONE;
+            buttonstate = BUTTON_NONE;
         }
     }
 
+    // Copy current state to last state.
     for (int i = 1; i<9; i++){
         laststate[i] = currstate[i];
     }
 }
 
 void set_state(){
+    // What state are we in? Has a button been pressed that should switch states?
     switch(mainstate){
-        case MANUAL:
+        case STATE_MANUAL:
             switch(buttonstate){
-                case A:
-                    mainstate = AUTO;
+                case BUTTON_A:
+                    mainstate = STATE_AUTO;
                     motorspeed = 0;
                     break;
-                case C:
-                    mainstate = SETTINGS;
+                case BUTTON_C:
+                    mainstate = STATE_SETTINGS;
+                    motorspeed = 0;
                     break;
             }
             break;
-        case AUTO:
+        case STATE_AUTO:
             switch(buttonstate){
-                case A:
-                    mainstate = MANUAL;
+                case BUTTON_A:
+                    mainstate = STATE_MANUAL;
                     motorspeed = 0;
                     break;
-                case C:
-                    mainstate = SETTINGS;
+                case BUTTON_C:
+                    mainstate = STATE_SETTINGS;
+                    motorspeed = 0;
                     break;
             }
             break;
-        case SETTINGS:
+        case STATE_SETTINGS:
             switch(buttonstate){
-                case A:
-                    mainstate = MANUAL;
+                case BUTTON_A:
+                    mainstate = STATE_MANUAL;
                     motorspeed = 0;
                     break;
             }
@@ -162,15 +186,16 @@ void set_state(){
     }
 }
 
+// Run the state machine function for the current state.
 void run_state(){
     switch(mainstate){
-        case MANUAL:
+        case STATE_MANUAL:
             run_state_manual();
             break;
-        case AUTO:
+        case STATE_AUTO:
             run_state_auto();
             break;
-        case SETTINGS:
+        case STATE_SETTINGS:
             run_state_settings();
             break;
     }
@@ -178,41 +203,49 @@ void run_state(){
 
 // Set motor speed, then fix prescaler to remove motor whine.
 void set_motor_speed(int speed){
+    // Write speed to MOTPIN. This resets the prescaler.
     analogWrite(MOTPIN,speed);
-    // Disable TCx
+    // Disable TC0
     TC0->COUNT8.CTRLA.bit.ENABLE = 0;
     while (TC0->COUNT8.SYNCBUSY.bit.ENABLE);
-    // Set Timer counter Mode to 8 bits, normal PWM, prescaler 1/256
+    // Reset prescaler to 1/16
     TC0->COUNT8.CTRLA.reg = TC_CTRLA_MODE_COUNT8 | TC_CTRLA_PRESCALER_DIV16;
-    // Enable TCx
+    // Enable TC0
     TC0->COUNT8.CTRLA.bit.ENABLE = 1;
     while (TC0->COUNT8.SYNCBUSY.bit.ENABLE);
 }
 
+// STATE_MANUAL 
 void run_state_manual(){
+    // Handle up/down buttons to increase/decrease speed.
     switch(buttonstate){
-        case UP:
+        case BUTTON_UP:
             motorspeed += 10;
             if (motorspeed > 250) motorspeed = 250;
             break;
-        case DOWN:
+        case BUTTON_DOWN:
             motorspeed -= 10;
             if (motorspeed < 0) motorspeed = 0;
             break;
     }
+    // Set the resulting speed.
     set_motor_speed(motorspeed);
 }
 
+// STATE_AUTO
 void run_state_auto(){
     static float motIncrement = 0.0;
+    
+    // Calculate motor increment per cycle.
     motIncrement = ((float)maxSpeed / ((float)FREQUENCY * (float)rampTimeS));
 
+    // Handle up/down buttons to increase/decrease sensitivity.
     switch(buttonstate){
-        case UP:
+        case BUTTON_UP:
             sensitivity += 10;
             if (sensitivity > MAX_PLIMIT) sensitivity = MAX_PLIMIT;
             break;
-        case DOWN:
+        case BUTTON_DOWN:
             sensitivity -= 10;
             if (sensitivity < 0) sensitivity = 0;
             break;
@@ -222,6 +255,7 @@ void run_state_auto(){
     // Higher sensitivity means a lower pressure delta to trigger an edge.
     pLimit = map(sensitivity,0,MAX_PLIMIT,MAX_PLIMIT,0);
 
+    // Above pLimit? Stop the motor by setting a negative speed. Else, increase speed by the motor increment.
     if (pressure - avgPressure > pLimit) {
         motorspeed = -.5*(float)rampTimeS*((float)FREQUENCY*motIncrement);//Stay off for a while (half the ramp up time)
     }
@@ -229,6 +263,7 @@ void run_state_auto(){
         motorspeed += motIncrement;
     }
 
+    // Speed above motor minimum? Set the motor speed. Else, set it to 0.
     if (motorspeed > MOT_MIN) {
         set_motor_speed((int)motorspeed);
     } else {
@@ -237,10 +272,12 @@ void run_state_auto(){
 
 }
 
+// STATE_SETTINGS
 void run_state_settings(){
 
 }
 
+// Log values to the serial console.
 void run_logging(){
     SerialUSB.print(mainstate);
     SerialUSB.print(",");
@@ -271,5 +308,6 @@ void mainloop() {
 }
 
 void loop(){
+    // Run the mainloop every PERIOD ms.
     if (millis() % PERIOD == 0) mainloop();
 }
