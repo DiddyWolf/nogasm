@@ -5,6 +5,8 @@
  */
 //=======Libraries===============================
 #include "RunningAverage.h"
+// Replace later with SD card support? No true EEPROM on WIO.
+#include <FlashStorage.h>
 
 //=======Hardware Setup===============================
 //Motor PWM out
@@ -17,7 +19,7 @@
 #define MAXPRES 4030
 
 //Motor min and max speeds
-#define MOT_MAX 255 // Motor PWM maximum
+#define MOT_MAX 250 // Motor PWM maximum
 #define MOT_MIN 20  // Motor PWM minimum.  It needs a little more than this to start.
 
 //=======States=====================================
@@ -28,7 +30,7 @@ MainStates mainstate = STATE_MANUAL;
 enum ButtonStates{BUTTON_NONE,BUTTON_A,BUTTON_B,BUTTON_C,BUTTON_UP,BUTTON_DOWN,BUTTON_LEFT,BUTTON_RIGHT,BUTTON_PRESS};
 ButtonStates buttonstate = BUTTON_NONE;
 
-enum SettingsStates{SET_SPEED, SET_SENSITIVITY};
+enum SettingsStates{SET_BEGIN, SET_SPEED = SET_BEGIN, SET_AREF, SET_END = SET_AREF};
 SettingsStates settingsstate = SET_SPEED;
 
 //=======Timing=====================================
@@ -55,7 +57,22 @@ int sensitivity = 0; //orgasm detection sensitivity, persists through different 
 int rampTimeS = 30; //Ramp-up time, in seconds
 #define MAX_PLIMIT 600
 int pLimit = MAX_PLIMIT; //Limit in change of pressure before the vibrator turns off
-int maxSpeed = 255; //maximum speed the motor will ramp up to in automatic mode
+int maxSpeed = MOT_MAX; //maximum speed the motor will ramp up to in automatic mode
+int arefs[] = {AR_DEFAULT,AR_INTERNAL2V5,AR_INTERNAL2V0,AR_INTERNAL1V65,AR_INTERNAL1V0};
+int aref = 0;
+
+//=======Settings====================================
+typedef struct {
+    bool valid;
+    int sensitivity;
+    int maxSpeed;
+    int aref;
+} SetStruct;
+
+FlashStorage(settings_storage, SetStruct);
+
+// Read in saved settings and load them if valid.
+SetStruct settings = settings_storage.read();
 
 //=======Setup=======================================
 
@@ -75,6 +92,22 @@ void setup() {
     pinMode(WIO_5S_RIGHT, INPUT_PULLUP);
     pinMode(WIO_5S_PRESS, INPUT_PULLUP);
 
+    // Load settings, or set to defaults.
+    if (settings.valid == true){
+        sensitivity = settings.sensitivity;
+        maxSpeed = settings.maxSpeed;
+        aref = settings.aref;
+    }
+    else {
+        settings.valid = true;
+        settings.sensitivity = sensitivity;
+        settings.maxSpeed = maxSpeed;
+        settings.aref = aref;
+        settings_storage.write(settings);
+    }
+
+    //Set analog reference
+    analogReference((eAnalogReference)arefs[aref]);
     //Set analog resolution for 0-4094 range
     analogReadResolution(12);
     //Average 32 samples on each read
@@ -110,9 +143,9 @@ void read_buttons(){
     static int laststate[9] = {0,1}; // Set the A key last state to start at 1, to avoid undesired button press on startup.
     static int currstate[9];
     static int holdcount = 0;
-    static int buttons[] = {NONE,WIO_KEY_A,WIO_KEY_B,WIO_KEY_C,WIO_5S_UP,WIO_5S_DOWN,WIO_5S_LEFT,WIO_5S_RIGHT,WIO_5S_PRESS};
+    static int buttons[] = {BUTTON_NONE,WIO_KEY_A,WIO_KEY_B,WIO_KEY_C,WIO_5S_UP,WIO_5S_DOWN,WIO_5S_LEFT,WIO_5S_RIGHT,WIO_5S_PRESS};
 
-    // Skipping 0 and padding the buttons array with NONE so that the 'resting' buttonstate can be 0.
+    // Skipping 0 and padding the buttons array with BUTTON_NONE so that the 'resting' buttonstate can be 0.
     for (int i = 1; i<9; i++){
         currstate[i] = digitalRead(buttons[i]);
     }
@@ -129,7 +162,7 @@ void read_buttons(){
             break;
         }
         // Direction buttons pressed and continue to be pressed.
-        else if ((i == UP or i == DOWN or i == LEFT or i == RIGHT) and laststate[i] == LOW and currstate[i] == LOW){
+        else if ((i == BUTTON_UP or i == BUTTON_DOWN or i == BUTTON_LEFT or i == BUTTON_RIGHT) and laststate[i] == LOW and currstate[i] == LOW){
             // Increment hold count.
             holdcount++;
             // Button held for BUTTON_HOLD_TICKS? Trigger button press.
@@ -160,6 +193,7 @@ void set_state(){
                 case BUTTON_C:
                     mainstate = STATE_SETTINGS;
                     motorspeed = 0;
+                    set_motor_speed(motorspeed);
                     break;
             }
             break;
@@ -168,10 +202,15 @@ void set_state(){
                 case BUTTON_A:
                     mainstate = STATE_MANUAL;
                     motorspeed = 0;
+                    settings.sensitivity = sensitivity;
+                    settings_storage.write(settings);
                     break;
                 case BUTTON_C:
                     mainstate = STATE_SETTINGS;
                     motorspeed = 0;
+                    set_motor_speed(motorspeed);
+                    settings.sensitivity = sensitivity;
+                    settings_storage.write(settings);
                     break;
             }
             break;
@@ -180,6 +219,7 @@ void set_state(){
                 case BUTTON_A:
                     mainstate = STATE_MANUAL;
                     motorspeed = 0;
+                    settings_storage.write(settings);
                     break;
             }
             break;
@@ -221,7 +261,7 @@ void run_state_manual(){
     switch(buttonstate){
         case BUTTON_UP:
             motorspeed += 10;
-            if (motorspeed > 250) motorspeed = 250;
+            if (motorspeed > MOT_MAX) motorspeed = MOT_MAX;
             break;
         case BUTTON_DOWN:
             motorspeed -= 10;
@@ -274,7 +314,72 @@ void run_state_auto(){
 
 // STATE_SETTINGS
 void run_state_settings(){
+    // Handle left/right buttons to move between settings pages. Loop at the ends.
+    switch(buttonstate){
+        case BUTTON_LEFT:
+            if (settingsstate == SET_BEGIN) settingsstate = SET_END;
+            else settingsstate = (SettingsStates)(settingsstate-1);
+            set_motor_speed(0);
+            break;
+        case BUTTON_RIGHT:
+            if (settingsstate == SET_END) settingsstate = SET_BEGIN;
+            else settingsstate = (SettingsStates)(settingsstate+1);
+            set_motor_speed(0);
+            break;
+    }
 
+    // Run the function to handle the current settings page.
+    switch(settingsstate){
+        case SET_SPEED:
+            run_set_speed();
+            break;
+        case SET_AREF:
+            run_set_aref();
+            break;
+    }
+}
+
+// Handle setting the max speed of the motor
+void run_set_speed(){
+    // Handle up/down buttons to increase/decrease max motor speed.
+    switch(buttonstate){
+        case BUTTON_UP:
+            maxSpeed += 10;
+            if (maxSpeed > MOT_MAX) maxSpeed = MOT_MAX;
+            break;
+        case BUTTON_DOWN:
+            maxSpeed -= 10;
+            if (maxSpeed < 0) maxSpeed = 0;
+            break;
+    }
+
+    // Save max speed to setting struct
+    settings.maxSpeed = maxSpeed;
+
+    // Set the motor to the current max speed.
+    set_motor_speed(maxSpeed);
+}
+
+// Handle setting the aref voltage / pressure sensor range/sensitivity.
+// Also display raw pressure reading and target range for resting pressure.
+void run_set_aref(){
+    // Handle up/down buttons to increase/decrease aref setting.
+    switch(buttonstate){
+        case BUTTON_UP:
+            aref += 1;
+            if (aref > 4) aref = 4;
+            break;
+        case BUTTON_DOWN:
+            aref -= 1;
+            if (aref < 0) aref = 0;
+            break;
+    }
+
+    // Save aref to setting struct
+    settings.aref = aref;
+
+    // Set the new aref value
+    analogReference((eAnalogReference)arefs[aref]);
 }
 
 // Log values to the serial console.
@@ -282,6 +387,8 @@ void run_logging(){
     SerialUSB.print(mainstate);
     SerialUSB.print(",");
     SerialUSB.print(buttonstate);
+    SerialUSB.print(",");
+    SerialUSB.print(settingsstate);
     SerialUSB.print(",");
     SerialUSB.print(pressure);
     SerialUSB.print(",");
@@ -292,6 +399,10 @@ void run_logging(){
     SerialUSB.print(pLimit);
     SerialUSB.print(",");
     SerialUSB.print(motorspeed);
+    SerialUSB.print(",");
+    SerialUSB.print(maxSpeed);
+    SerialUSB.print(",");
+    SerialUSB.print(aref);
     SerialUSB.println("");
 }
 
