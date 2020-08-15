@@ -8,6 +8,9 @@
 // Replace later with SD card support? No true EEPROM on WIO.
 #include <FlashStorage.h>
 
+#include "TFT_eSPI.h"
+#include "Free_Fonts.h"
+
 //=======Hardware Setup===============================
 //Motor PWM out
 #define MOTPIN D6
@@ -22,10 +25,16 @@
 #define MOT_MAX 250 // Motor PWM maximum
 #define MOT_MIN 20  // Motor PWM minimum.  It needs a little more than this to start.
 
+//Setup display.
+TFT_eSPI tft;
+TFT_eSprite screen = TFT_eSprite(&tft);
+TFT_eSprite sprite = TFT_eSprite(&tft);
+
 //=======States=====================================
 //Define all enums for state machines
 enum MainStates{STATE_MANUAL,STATE_AUTO,STATE_SETTINGS};
 MainStates mainstate = STATE_MANUAL;
+int laststate = -1;
 
 enum ButtonStates{BUTTON_NONE,BUTTON_A,BUTTON_B,BUTTON_C,BUTTON_UP,BUTTON_DOWN,BUTTON_LEFT,BUTTON_RIGHT,BUTTON_PRESS};
 ButtonStates buttonstate = BUTTON_NONE;
@@ -47,7 +56,7 @@ SettingsStates settingsstate = SET_SPEED;
 RunningAverage raPressure(RA_FREQUENCY*RA_HIST_SECONDS);
 
 // Number of ticks between repeat button presses.
-#define BUTTON_HOLD_TICKS 20
+#define BUTTON_HOLD_TICKS 10
 
 //=======Globals====================================
 int pressure = 0;
@@ -57,7 +66,7 @@ int sensitivity = 0; //orgasm detection sensitivity, persists through different 
 int rampTimeS = 30; //Ramp-up time, in seconds
 #define MAX_PLIMIT 600
 int pLimit = MAX_PLIMIT; //Limit in change of pressure before the vibrator turns off
-int maxSpeed = MOT_MAX; //maximum speed the motor will ramp up to in automatic mode
+int maxSpeed = 170; //maximum speed the motor will ramp up to in automatic mode
 int arefs[] = {AR_DEFAULT,AR_INTERNAL2V5,AR_INTERNAL2V0,AR_INTERNAL1V65,AR_INTERNAL1V0};
 int aref = 0;
 
@@ -77,7 +86,18 @@ SetStruct settings = settings_storage.read();
 //=======Setup=======================================
 
 void setup() {
+    //Start Serial
     SerialUSB.begin(115200);
+
+    //Start Display
+    tft.begin();
+    tft.setRotation(3); //Make it right side up.
+    tft.fillScreen(TFT_BLACK);
+    screen.setColorDepth(8);
+    screen.createSprite(TFT_HEIGHT,TFT_WIDTH);
+    screen.setFreeFont(&FreeMono12pt7b);
+    sprite.setFreeFont(&FreeMono12pt7b);
+
 
     //Set pinmodes
     pinMode(BUTTPIN, INPUT);
@@ -120,6 +140,9 @@ void setup() {
 void read_pressure() {
     static uint8_t sampleTick = 0;
 
+    //Disable motor during sensor read to reduce noise
+    set_motor_speed(0);
+
     pressure = analogRead(BUTTPIN);
 
     //Alarm if over max pressure
@@ -135,6 +158,9 @@ void read_pressure() {
         raPressure.addValue(pressure);
         avgPressure = raPressure.getAverage();
     }
+
+    //Reenable motor
+    set_motor_speed(motorspeed);
 
 }
 
@@ -382,6 +408,102 @@ void run_set_aref(){
     analogReference((eAnalogReference)arefs[aref]);
 }
 
+// Display
+void draw_display(){
+    //Blank the display, then run the appropriate code based on main state
+    switch(mainstate){
+        case STATE_MANUAL:
+            draw_manual();
+            break;
+        case STATE_AUTO:
+            draw_auto();
+            break;
+        case STATE_SETTINGS:
+            draw_settings();
+            break;
+    }
+    
+}
+
+void draw_manual(){
+    if (laststate != mainstate){
+        screen.fillSprite(TFT_BLACK);
+        screen.setTextDatum(TL_DATUM);
+        screen.drawString("^SETTINGS",0,0);
+        screen.drawString("^AUTO",160,0);
+
+        screen.setTextDatum(TR_DATUM);
+        screen.drawString("MODE:",155,35);
+        screen.setTextDatum(TL_DATUM);
+        screen.drawString("MANUAL",165,35);
+
+        screen.setTextDatum(TR_DATUM);
+        screen.drawString("Pressure:",155,70);
+        screen.drawString("Speed:",155,90);
+
+        screen.pushSprite(0, 0);
+    }
+
+    sprite.setColorDepth(8);
+    sprite.createSprite(80,40);
+    sprite.fillSprite(TFT_BLACK);
+
+    sprite.setTextDatum(TL_DATUM);
+    sprite.drawString(String(pressure),0,0);
+    sprite.drawString(String((int)motorspeed),0,20);
+
+    sprite.pushSprite(165,70);
+    sprite.deleteSprite();
+}
+
+void draw_auto(){
+    if (laststate != mainstate){
+        screen.fillSprite(TFT_BLACK);
+        screen.setTextDatum(TL_DATUM);
+        screen.drawString("^SETTINGS",0,0);
+        screen.drawString("^MANUAL",160,0);
+
+        screen.setTextDatum(TR_DATUM);
+        screen.drawString("MODE:",155,35);
+        screen.setTextDatum(TL_DATUM);
+        screen.drawString("AUTO",165,35);
+
+        screen.setTextDatum(TR_DATUM);
+        screen.drawString("Pressure:",155,70);
+        screen.drawString("Speed:",155,90);
+        screen.drawString("Sensitivity:",155,110);
+        screen.drawString("% of pLimit:",155,130);
+
+        screen.pushSprite(0, 0);
+    }
+
+    sprite.setColorDepth(8);
+    sprite.createSprite(80,80);
+    sprite.fillSprite(TFT_BLACK);
+
+    sprite.setTextDatum(TL_DATUM);
+    sprite.drawString(String(pressure),0,0);
+    sprite.drawString(String((int)motorspeed),0,20);
+    sprite.drawString(String(sensitivity),0,40);
+    float percent_plimit = constrain(((float)(pressure - avgPressure) / (float)pLimit) * 100.0,0.0,100.0);
+    sprite.drawString(String(percent_plimit,1),0,60);
+
+    sprite.pushSprite(165,70);
+    sprite.deleteSprite();
+}
+
+void draw_settings(){
+    if (laststate != mainstate){
+        screen.fillSprite(TFT_BLACK);
+        screen.setTextDatum(TL_DATUM);
+        screen.drawString("^SAVE/EXIT",160,0);
+        screen.setTextDatum(TC_DATUM);
+        screen.drawString("Under Development!",160,35);
+        screen.pushSprite(0, 0);
+    }
+}
+
+
 // Log values to the serial console.
 void run_logging(){
     SerialUSB.print(mainstate);
@@ -413,8 +535,11 @@ void mainloop() {
     read_buttons();
     set_state();
     run_state();
-    //draw_display();
-    run_logging(); 
+    draw_display();
+    run_logging();
+    //Handling this here so that laststate will be -1 through the entire first loop.
+    //Probably a better way to do this, but... ¯\_(ツ)_/¯
+    laststate = mainstate; 
     delay(1); //Prevent repetitive runs if we finish faster than 1ms
 }
 
