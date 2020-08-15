@@ -531,7 +531,7 @@ void draw_set_speed(){
     sprite.deleteSprite();
 
     sprite.setColorDepth(8);
-    sprite.createSprite(155,20);
+    sprite.createSprite(155,60);
     sprite.fillSprite(TFT_BLACK);
 
     sprite.setTextDatum(TR_DATUM);
@@ -542,13 +542,13 @@ void draw_set_speed(){
     sprite.deleteSprite();
 
     sprite.setColorDepth(8);
-    sprite.createSprite(80,60);
+    sprite.createSprite(80,80);
     sprite.fillSprite(TFT_BLACK);
 
     sprite.setTextDatum(TL_DATUM);
-    sprite.drawString("   ^",0,0);
+    sprite.drawString(" ^",0,0);
     sprite.drawString(String((int)maxSpeed),0,20);
-    sprite.drawString("   v",0,40);
+    sprite.drawString(" v",0,40);
 
     sprite.pushSprite(165,70);
 
@@ -584,9 +584,9 @@ void draw_set_aref(){
     sprite.fillSprite(TFT_BLACK);
 
     sprite.setTextDatum(TL_DATUM);
-    sprite.drawString("   ^",0,0);
+    sprite.drawString("^",0,0);
     sprite.drawString(String((int)aref),0,20);
-    sprite.drawString("   v",0,40);
+    sprite.drawString("v",0,40);
     sprite.drawString(String(pressure),0,60);
 
     sprite.pushSprite(165,70);
