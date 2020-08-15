@@ -497,10 +497,101 @@ void draw_settings(){
         screen.fillSprite(TFT_BLACK);
         screen.setTextDatum(TL_DATUM);
         screen.drawString("^SAVE/EXIT",160,0);
-        screen.setTextDatum(TC_DATUM);
-        screen.drawString("Under Development!",160,35);
+        //screen.setTextDatum(TC_DATUM);
+        //screen.drawString("Under Development!",160,35);
+
+        screen.setTextDatum(TR_DATUM);
+        screen.drawString("< SETTINGS:",155,35);
+        //screen.setTextDatum(TL_DATUM);
+        //screen.drawString("AUTO",165,35);
+
         screen.pushSprite(0, 0);
     }
+
+    switch(settingsstate){
+        case SET_SPEED:
+            draw_set_speed();
+            break;
+        case SET_AREF:
+            draw_set_aref();
+            break;
+    }
+}
+
+void draw_set_speed(){
+    sprite.setColorDepth(8);
+    sprite.createSprite(160,20);
+    sprite.fillSprite(TFT_BLACK);
+
+    sprite.setTextDatum(TL_DATUM);
+    sprite.drawString("Max Speed >",0,0);
+
+    sprite.pushSprite(165,35);
+
+    sprite.deleteSprite();
+
+    sprite.setColorDepth(8);
+    sprite.createSprite(155,20);
+    sprite.fillSprite(TFT_BLACK);
+
+    sprite.setTextDatum(TR_DATUM);
+    sprite.drawString("Max Speed:",155,0);
+
+    sprite.pushSprite(0,90);
+
+    sprite.deleteSprite();
+
+    sprite.setColorDepth(8);
+    sprite.createSprite(80,60);
+    sprite.fillSprite(TFT_BLACK);
+
+    sprite.setTextDatum(TL_DATUM);
+    sprite.drawString("   ^",0,0);
+    sprite.drawString(String((int)maxSpeed),0,20);
+    sprite.drawString("   v",0,40);
+
+    sprite.pushSprite(165,70);
+
+    sprite.deleteSprite();
+}
+
+void draw_set_aref(){
+    sprite.setColorDepth(8);
+    sprite.createSprite(160,20);
+    sprite.fillSprite(TFT_BLACK);
+
+    sprite.setTextDatum(TL_DATUM);
+    sprite.drawString("ARef >",0,0);
+
+    sprite.pushSprite(165,35);
+
+    sprite.deleteSprite();
+
+    sprite.setColorDepth(8);
+    sprite.createSprite(155,60);
+    sprite.fillSprite(TFT_BLACK);
+
+    sprite.setTextDatum(TR_DATUM);
+    sprite.drawString("ARef:",155,0);
+    sprite.drawString("Pressure:",155,40);
+
+    sprite.pushSprite(0,90);
+
+    sprite.deleteSprite();
+
+    sprite.setColorDepth(8);
+    sprite.createSprite(80,80);
+    sprite.fillSprite(TFT_BLACK);
+
+    sprite.setTextDatum(TL_DATUM);
+    sprite.drawString("   ^",0,0);
+    sprite.drawString(String((int)aref),0,20);
+    sprite.drawString("   v",0,40);
+    sprite.drawString(String(pressure),0,60);
+
+    sprite.pushSprite(165,70);
+
+    sprite.deleteSprite();
 }
 
 
